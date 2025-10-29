@@ -1,4 +1,5 @@
 const polymarketService = require('../services/polymarketService');
+const walletStorage = require('../services/walletStorage');
 
 function setupBotCommands(bot) {
   // Start command
@@ -236,13 +237,37 @@ ${!walletAddress ? '💡 Use /connect to link your wallet and access all feature
       handleWalletAddress(bot, chatId, text);
     }
   });
+
+  // Handle text messages (for wallet address input)
+  bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const text = msg.text;
+    
+    // Skip if it's a command (starts with /)
+    if (text && text.startsWith('/')) {
+      return;
+    }
+    
+    // Check if user is in wallet input state
+    const userState = walletStorage.getUserState(chatId);
+    
+    if (userState === 'awaiting_wallet') {
+      // User is expected to send wallet address
+      await handleWalletAddress(bot, chatId, text.trim());
+    } else if (text && text.match(/^0x[a-fA-F0-9]{40}$/)) {
+      // User sent what looks like a wallet address without being prompted
+      bot.sendMessage(chatId, `🔗 I detected a wallet address! 
+
+Would you like to connect this wallet?
+
+Use /connect to start the connection process, or send the address again if you want me to connect it directly.`);
+    }
+  });
 }
 
-// Helper function to get user's wallet (placeholder - implement with database)
+// Helper function to get user's wallet
 function getUserWallet(chatId) {
-  // TODO: Implement database lookup
-  // For now, return null - this should be replaced with actual storage
-  return null;
+  return walletStorage.getWallet(chatId);
 }
 
 // Helper function to handle wallet address input
@@ -250,8 +275,24 @@ async function handleWalletAddress(bot, chatId, walletAddress) {
   try {
     bot.sendMessage(chatId, '🔄 Verifying wallet address...');
     
-    // TODO: Validate wallet address and save to database
-    // For now, just confirm receipt
+    // Validate wallet address format
+    if (!polymarketService.isValidWalletAddress(walletAddress)) {
+      bot.sendMessage(chatId, `❌ *Invalid wallet address format*
+
+Please make sure your address:
+• Starts with 0x
+• Is exactly 42 characters long
+• Contains only hexadecimal characters (0-9, a-f, A-F)
+
+*Example:* 0x742d35Cc6634C0532925a3b8D4C9db96590c6C87
+
+Please try again with a valid address.`, { parse_mode: 'Markdown' });
+      return;
+    }
+    
+    // Save wallet address
+    walletStorage.saveWallet(chatId, walletAddress);
+    walletStorage.clearUserState(chatId);
     
     const confirmMessage = `
 ✅ *Wallet Connected Successfully!*
@@ -263,12 +304,23 @@ You can now use:
 • /pnl - Check your profit/loss
 • /status - Check connection status
 
-🔄 Fetching your data now...
+🔄 Fetching your initial data...
     `;
     
     bot.sendMessage(chatId, confirmMessage, { parse_mode: 'Markdown' });
     
-    // TODO: Save wallet to database and fetch initial data
+    // Try to fetch initial position data
+    try {
+      const positions = await polymarketService.getUserPositions(walletAddress);
+      if (positions.length > 0) {
+        bot.sendMessage(chatId, `🎉 Found ${positions.length} position(s) in your wallet! Use /positions to view them.`);
+      } else {
+        bot.sendMessage(chatId, `📊 No active positions found. Start trading on Polymarket to see your positions here!`);
+      }
+    } catch (error) {
+      console.error('Error fetching initial data:', error);
+      bot.sendMessage(chatId, `⚠️ Wallet connected but couldn't fetch initial data. You can still use all commands.`);
+    }
     
   } catch (error) {
     console.error('Error handling wallet address:', error);

@@ -2,24 +2,19 @@ const axios = require('axios');
 
 class PolymarketService {
   constructor() {
-    this.apiUrl = process.env.POLYMARKET_API_URL || 'https://gamma-api.polymarket.com';
-    this.clobApiUrl = process.env.POLYMARKET_CLOB_API_URL || 'https://clob.polymarket.com';
-    
-    // Create axios instances with default configurations
-    this.api = axios.create({
-      baseURL: this.apiUrl,
+    this.gammaApi = axios.create({
+      baseURL: 'https://gamma-api.polymarket.com',
       timeout: 10000,
-      headers: {
-        'Content-Type': 'application/json',
-      }
     });
-    
-    this.clobApi = axios.create({
-      baseURL: this.clobApiUrl,
+
+    this.dataApi = axios.create({
+      baseURL: 'https://data-api.polymarket.com',
       timeout: 10000,
-      headers: {
-        'Content-Type': 'application/json',
-      }
+    });
+
+    this.clobApi = axios.create({
+      baseURL: 'https://clob.polymarket.com',
+      timeout: 10000,
     });
   }
 
@@ -32,43 +27,44 @@ class PolymarketService {
     try {
       console.log(`Fetching positions for wallet: ${walletAddress}`);
       
-      // Get user's positions from the CLOB API
-      const response = await this.clobApi.get(`/positions`, {
+      // Get user's positions from the Data API
+      const response = await this.dataApi.get(`/positions`, {
         params: {
           user: walletAddress.toLowerCase(),
           limit: 100
         }
       });
       
-      if (!response.data || !response.data.data) {
+      if (!response.data || !Array.isArray(response.data)) {
         return [];
       }
       
-      const positions = response.data.data;
+      const positions = response.data;
       const formattedPositions = [];
       
       for (const position of positions) {
         try {
-          // Get market details for each position
-          const marketData = await this.getMarketById(position.market);
-          
           const formattedPosition = {
-            id: position.id,
-            market: marketData?.question || 'Unknown Market',
-            marketId: position.market,
-            tokenId: position.asset_id,
-            side: position.side === 'BUY' ? 'YES' : 'NO',
-            amount: parseFloat(position.size),
-            avgPrice: parseFloat(position.avg_price || 0),
-            currentPrice: await this.getCurrentPrice(position.asset_id),
-            value: parseFloat(position.size) * parseFloat(position.avg_price || 0),
-            pnl: this.calculatePositionPNL(position),
-            status: position.status || 'ACTIVE'
+            id: position.conditionId,
+            market: position.title || 'Unknown Market',
+            marketId: position.conditionId,
+            tokenId: position.asset,
+            side: position.outcome || 'Unknown',
+            amount: parseFloat(position.size || 0),
+            avgPrice: parseFloat(position.avgPrice || 0),
+            currentPrice: parseFloat(position.curPrice || 0),
+            value: parseFloat(position.currentValue || 0),
+            initialValue: parseFloat(position.initialValue || 0),
+            pnl: parseFloat(position.cashPnl || 0),
+            percentPnl: parseFloat(position.percentPnl || 0),
+            status: 'ACTIVE',
+            redeemable: position.redeemable || false,
+            mergeable: position.mergeable || false
           };
           
           formattedPositions.push(formattedPosition);
         } catch (error) {
-          console.error(`Error processing position ${position.id}:`, error);
+          console.error(`Error processing position ${position.conditionId}:`, error);
         }
       }
       
@@ -141,26 +137,26 @@ class PolymarketService {
    */
   async getUserTrades(walletAddress) {
     try {
-      const response = await this.clobApi.get(`/trades`, {
+      const response = await this.dataApi.get(`/trades`, {
         params: {
-          maker: walletAddress.toLowerCase(),
+          user: walletAddress.toLowerCase(),
           limit: 1000
         }
       });
       
-      if (!response.data || !response.data.data) {
+      if (!response.data || !Array.isArray(response.data)) {
         return [];
       }
       
-      return response.data.data.map(trade => ({
-        id: trade.id,
-        market: trade.market,
+      return response.data.map(trade => ({
+        id: trade.conditionId,
+        market: trade.title || 'Unknown Market',
         side: trade.side,
-        size: parseFloat(trade.size),
-        price: parseFloat(trade.price),
-        volume: parseFloat(trade.size) * parseFloat(trade.price),
-        timestamp: new Date(trade.timestamp),
-        pnl: this.calculateTradePNL(trade) // This would need more complex logic
+        size: parseFloat(trade.size || 0),
+        price: parseFloat(trade.price || 0),
+        volume: parseFloat(trade.size || 0) * parseFloat(trade.price || 0),
+        timestamp: new Date(trade.timestamp * 1000), // Convert from Unix timestamp
+        pnl: 0 // PNL calculation would need more complex logic
       }));
       
     } catch (error) {
@@ -175,7 +171,7 @@ class PolymarketService {
    */
   async getActiveMarkets() {
     try {
-      const response = await this.api.get('/markets', {
+      const response = await this.gammaApi.get('/markets', {
         params: {
           limit: 20,
           active: true,
@@ -213,7 +209,7 @@ class PolymarketService {
    */
   async getMarketById(marketId) {
     try {
-      const response = await this.api.get(`/markets/${marketId}`);
+      const response = await this.gammaApi.get(`/markets/${marketId}`);
       return response.data;
     } catch (error) {
       console.error(`Error fetching market ${marketId}:`, error);

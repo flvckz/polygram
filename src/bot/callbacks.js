@@ -1,3 +1,5 @@
+const walletStorage = require('../services/walletStorage');
+
 function setupBotCallbacks(bot) {
   // Handle callback queries from inline keyboards
   bot.on('callback_query', async (callbackQuery) => {
@@ -38,6 +40,9 @@ function setupBotCallbacks(bot) {
 }
 
 async function handleEnterWallet(bot, chatId, messageId) {
+  // Set user state to expect wallet address input
+  walletStorage.setUserState(chatId, 'awaiting_wallet');
+  
   const message = `
 📝 *Enter Your Wallet Address*
 
@@ -117,6 +122,9 @@ Remember: This is your PUBLIC address, not your private key!
 }
 
 async function handleBackToConnect(bot, chatId, messageId) {
+  // Clear user state when going back
+  walletStorage.clearUserState(chatId);
+  
   const message = `
 🔗 *Connect Your Polymarket Wallet*
 
